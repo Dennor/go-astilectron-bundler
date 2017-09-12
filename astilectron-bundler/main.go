@@ -87,7 +87,7 @@ func main() {
 	switch s {
 	case "bd":
 		// Bind data
-		if err = b.BindData(runtime.GOOS, runtime.GOARCH); err != nil {
+		if err = b.BindData(runtime.GOOS, runtime.GOARCH, ""); err != nil {
 			astilog.Fatal(errors.Wrap(err, "binding data failed"))
 		}
 	case "cc":

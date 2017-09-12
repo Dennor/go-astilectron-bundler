@@ -52,6 +52,12 @@ type Configuration struct {
 	// The path where the files will be written
 	OutputPath string `json:"output_path"`
 
+	// Override bind.go output dir.
+	BindOutput string `json:"bind_output"`
+
+	// Override main package in bind.go
+	BindPackage string `json:"bind_package"`
+
 	//!\\ DEBUG ONLY
 	AstilectronPath string `json:"astilectron_path"` // when making changes to astilectron
 }
@@ -60,6 +66,7 @@ type Configuration struct {
 type ConfigurationEnvironment struct {
 	Arch string `json:"arch"`
 	OS   string `json:"os"`
+	Tags string `json:"tags"`
 }
 
 // Bundler represents an object capable of bundling an Astilectron app
@@ -80,6 +87,8 @@ type Bundler struct {
 	pathOutput      string
 	pathResources   string
 	pathVendor      string
+	pathBindOutput  string
+	bindPackage     string
 }
 
 // absPath computes the absolute path
@@ -163,6 +172,16 @@ func New(c *Configuration) (b *Bundler, err error) {
 	// Output path
 	if b.pathOutput, err = absPath(c.OutputPath, os.Getwd); err != nil {
 		return
+	}
+
+	b.pathBindOutput = b.pathInput
+	if len(c.BindOutput) > 0 {
+		b.pathBindOutput = filepath.Join(b.pathInput, c.BindOutput)
+	}
+
+	b.bindPackage = "main"
+	if len(c.BindPackage) > 0 {
+		b.bindPackage = c.BindPackage
 	}
 	return
 }
@@ -315,7 +334,7 @@ func (b *Bundler) provisionVendor(oS, arch string) (err error) {
 }
 
 // BindData binds the data
-func (b *Bundler) BindData(os, arch string) (err error) {
+func (b *Bundler) BindData(os, arch, tags string) (err error) {
 	// Provision the vendor
 	if err = b.provisionVendor(os, arch); err != nil {
 		err = errors.Wrap(err, "provisioning the vendor failed")
@@ -328,8 +347,10 @@ func (b *Bundler) BindData(os, arch string) (err error) {
 		{Path: filepath.Join(b.pathInput, "resources"), Recursive: true},
 		{Path: filepath.Join(b.pathInput, "vendor"), Recursive: true},
 	}
-	c.Output = filepath.Join(b.pathInput, "bind.go")
-	c.Prefix = b.pathInput
+	c.Output = filepath.Join(b.pathBindOutput, fmt.Sprintf("bind_%s.go", os))
+	c.Prefix = b.pathBindOutput
+	c.Package = b.bindPackage
+	c.Tags = os + " " + tags
 
 	// Bind data
 	astilog.Debugf("Generating %s", c.Output)
@@ -367,7 +388,12 @@ func (l ldflags) string() string {
 // bundle bundles an os
 func (b *Bundler) bundle(e ConfigurationEnvironment) (err error) {
 	// Remove previous environment folder
-	var environmentPath = filepath.Join(b.pathOutput, e.OS+"-"+e.Arch)
+	var environmentPath = filepath.Join(b.pathOutput, e.OS)
+	if len(e.Tags) > 0 {
+		tags := strings.Replace(e.Tags, " ", "-", -1)
+		environmentPath = environmentPath + "-" + tags
+	}
+	environmentPath = environmentPath + "-" + e.Arch
 	astilog.Debugf("Removing %s", environmentPath)
 	if err = os.RemoveAll(environmentPath); err != nil {
 		err = errors.Wrapf(err, "removing %s failed", environmentPath)
@@ -383,7 +409,7 @@ func (b *Bundler) bundle(e ConfigurationEnvironment) (err error) {
 
 	// Bind data
 	astilog.Debug("Binding data")
-	if err = b.BindData(e.OS, e.Arch); err != nil {
+	if err = b.BindData(e.OS, e.Arch, e.Tags); err != nil {
 		err = errors.Wrap(err, "binding data failed")
 		return
 	}
@@ -399,8 +425,8 @@ func (b *Bundler) bundle(e ConfigurationEnvironment) (err error) {
 	// Build ldflags
 	var l = ldflags{
 		"X": []string{
-			`"main.AppName=` + b.appName + `"`,
-			`"main.BuiltAt=` + time.Now().String() + `"`,
+			`"` + b.bindPackage + `.AppName=` + b.appName + `"`,
+			`"` + b.bindPackage + `.BuiltAt=` + time.Now().String() + `"`,
 		},
 	}
 	if e.OS == "windows" {
@@ -410,7 +436,7 @@ func (b *Bundler) bundle(e ConfigurationEnvironment) (err error) {
 	// Build cmd
 	astilog.Debugf("Building for os %s and arch %s", e.OS, e.Arch)
 	var binaryPath = filepath.Join(environmentPath, "binary")
-	var cmd = exec.Command(b.pathGoBinary, "build", "-ldflags", l.string(), "-o", binaryPath, b.pathBuild)
+	var cmd = exec.Command(b.pathGoBinary, "build", "-ldflags", l.string(), "-o", binaryPath, "-tags", e.Tags, b.pathBuild)
 	cmd.Env = []string{
 		"GOARCH=" + e.Arch,
 		"GOOS=" + e.OS,
