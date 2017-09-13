@@ -464,7 +464,7 @@ func (b *Bundler) bundle(e ConfigurationEnvironment) (err error) {
 	// Build ldflags
 	var l = ldflags{
 		"X": []string{
-			`"` + b.bindPackage + `.AppName=` + b.appName + `"`,
+			//`"` + b.bindPackage + `.AppName=` + b.appName + `"`,
 			`"` + b.bindPackage + `.BuiltAt=` + time.Now().String() + `"`,
 		},
 	}
