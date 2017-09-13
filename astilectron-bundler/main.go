@@ -20,6 +20,7 @@ var (
 	darwin            = flag.Bool("d", false, "if set, will add darwin/amd64 to the environments")
 	linux             = flag.Bool("l", false, "if set, will add linux/amd64 to the environments")
 	windows           = flag.Bool("w", false, "if set, will add windows/amd64 to the environments")
+	environmentFilter = flag.String("e", "", "if set, will only match environments matching pattern.")
 )
 
 func main() {
@@ -72,6 +73,11 @@ func main() {
 	}
 	if len(c.Environments) == 0 {
 		c.Environments = []astibundler.ConfigurationEnvironment{{Arch: runtime.GOARCH, OS: runtime.GOOS}}
+	}
+
+	// Environment filtering.
+	if len(*environmentFilter) > 0 {
+		c.EnvironmentFilter = *environmentFilter
 	}
 
 	// Build bundler

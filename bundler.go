@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -58,8 +59,14 @@ type Configuration struct {
 	// Override main package in bind.go
 	BindPackage string `json:"bind_package"`
 
+	// Override tags for bind.go
+	BindTags string `json:"bind_tags"`
+
 	//!\\ DEBUG ONLY
 	AstilectronPath string `json:"astilectron_path"` // when making changes to astilectron
+
+	// Environment filter
+	EnvironmentFilter string `json:"environment_filter"`
 }
 
 // ConfigurationEnvironment represents the bundle configuration environment
@@ -71,24 +78,26 @@ type ConfigurationEnvironment struct {
 
 // Bundler represents an object capable of bundling an Astilectron app
 type Bundler struct {
-	appName         string
-	cancel          context.CancelFunc
-	Client          *http.Client
-	ctx             context.Context
-	environments    []ConfigurationEnvironment
-	pathAstilectron string
-	pathBuild       string
-	pathCache       string
-	pathIconDarwin  string
-	pathIconLinux   string
-	pathIconWindows string
-	pathInput       string
-	pathGoBinary    string
-	pathOutput      string
-	pathResources   string
-	pathVendor      string
-	pathBindOutput  string
-	bindPackage     string
+	appName           string
+	cancel            context.CancelFunc
+	Client            *http.Client
+	ctx               context.Context
+	environments      []ConfigurationEnvironment
+	pathAstilectron   string
+	pathBuild         string
+	pathCache         string
+	pathIconDarwin    string
+	pathIconLinux     string
+	pathIconWindows   string
+	pathInput         string
+	pathGoBinary      string
+	pathOutput        string
+	pathResources     string
+	pathVendor        string
+	pathBindOutput    string
+	bindPackage       string
+	bindTags          string
+	environmentFilter string
 }
 
 // absPath computes the absolute path
@@ -183,6 +192,16 @@ func New(c *Configuration) (b *Bundler, err error) {
 	if len(c.BindPackage) > 0 {
 		b.bindPackage = c.BindPackage
 	}
+
+	b.bindTags = ""
+	if len(c.BindTags) > 0 {
+		b.bindTags = c.BindTags
+	}
+
+	b.environmentFilter = ""
+	if len(c.EnvironmentFilter) > 0 {
+		b.environmentFilter = c.EnvironmentFilter
+	}
 	return
 }
 
@@ -226,6 +245,23 @@ func (b *Bundler) Bundle() (err error) {
 
 	// Loop through environments
 	for _, e := range b.environments {
+		eName := e.OS + "-"
+		if e.Tags != "" {
+			eName = eName + strings.Replace(e.Tags, " ", "-", -1) + "-"
+		}
+		eName = eName + e.Arch
+		if b.environmentFilter != "" {
+			var m bool
+			m, err = regexp.MatchString(b.environmentFilter, eName)
+			if err != nil {
+				err = errors.Wrap(err, "environment matching failed")
+				return
+			}
+			if !m {
+				continue
+			}
+		}
+
 		astilog.Debugf("Bundling for environment %s/%s", e.OS, e.Arch)
 		if err = b.bundle(e); err != nil {
 			err = errors.Wrapf(err, "bundling for environment %s/%s failed", e.OS, e.Arch)
@@ -348,9 +384,12 @@ func (b *Bundler) BindData(os, arch, tags string) (err error) {
 		{Path: filepath.Join(b.pathInput, "vendor"), Recursive: true},
 	}
 	c.Output = filepath.Join(b.pathBindOutput, fmt.Sprintf("bind_%s.go", os))
-	c.Prefix = b.pathBindOutput
+	c.Prefix = b.pathInput
 	c.Package = b.bindPackage
-	c.Tags = os + " " + tags
+	c.Tags = os
+	if len(b.bindTags) > 0 {
+		c.Tags = c.Tags + "\n// +build " + b.bindTags + ""
+	}
 
 	// Bind data
 	astilog.Debugf("Generating %s", c.Output)
@@ -434,7 +473,7 @@ func (b *Bundler) bundle(e ConfigurationEnvironment) (err error) {
 	}
 
 	// Build cmd
-	astilog.Debugf("Building for os %s and arch %s", e.OS, e.Arch)
+	astilog.Debugf("Building for os %s and arch %s with tags %s", e.OS, e.Arch, e.Tags)
 	var binaryPath = filepath.Join(environmentPath, "binary")
 	var cmd = exec.Command(b.pathGoBinary, "build", "-ldflags", l.string(), "-o", binaryPath, "-tags", e.Tags, b.pathBuild)
 	cmd.Env = []string{
